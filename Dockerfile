@@ -21,8 +21,18 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the model first
-COPY rf_spark_model /app/rf_spark_model/
+# Create model directory with proper permissions
+RUN mkdir -p /app/rf_spark_model && \
+    chmod -R 755 /app/rf_spark_model
+
+# Copy the model files
+COPY rf_spark_model/ /app/rf_spark_model/
+
+# Set proper permissions and verify
+RUN chmod -R 755 /app/rf_spark_model && \
+    chown -R root:root /app/rf_spark_model && \
+    ls -la /app/rf_spark_model/ && \
+    ls -la /app/rf_spark_model/metadata/
 
 # Copy the rest of the application
 COPY . .
@@ -30,9 +40,12 @@ COPY . .
 # Set environment variables for Spark
 ENV SPARK_LOCAL_IP=0.0.0.0
 ENV SPARK_PUBLIC_DNS=localhost
+ENV PYTHONUNBUFFERED=1
+ENV SPARK_HOME=/usr/local/lib/python3.9/site-packages/pyspark
+ENV HADOOP_CONF_DIR=/usr/local/lib/python3.9/site-packages/pyspark/conf
 
 # Expose the port FastAPI will run on
 EXPOSE 8000
 
 # Command to run the FastAPI app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-u", "main.py"]

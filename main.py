@@ -5,18 +5,39 @@ from pyspark.ml.classification import RandomForestClassificationModel
 from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler
 from pyspark.sql.types import StructType, StructField, StringType, FloatType
 import pandas as pd
+import logging
+import sys
+import os
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Initialize Spark session
-spark = SparkSession.builder \
-    .appName("Churn Prediction API") \
-    .master("local[1]") \
-    .config("spark.driver.memory", "2g") \
-    .config("spark.executor.memory", "2g") \
-    .config("spark.memory.offHeap.enabled", "true") \
-    .config("spark.memory.offHeap.size", "1g") \
-    .getOrCreate()
+try:
+    logger.info("Initializing Spark session...")
+    # Initialize Spark session
+    spark = SparkSession.builder \
+        .appName("Churn Prediction API") \
+        .master("local[1]") \
+        .config("spark.driver.memory", "2g") \
+        .config("spark.executor.memory", "2g") \
+        .config("spark.memory.offHeap.enabled", "true") \
+        .config("spark.memory.offHeap.size", "1g") \
+        .config("spark.hadoop.fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem") \
+        .config("spark.hadoop.fs.defaultFS", "file:///") \
+        .getOrCreate()
+    logger.info("Spark session initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Spark session: {str(e)}")
+    raise
 
 # Define schema for input data
 schema = StructType([
@@ -44,11 +65,32 @@ schema = StructType([
 # Load the RandomForest model
 model_path = "rf_spark_model"
 try:
+    logger.info(f"Attempting to load model from {model_path}")
+    # Verify model directory exists and has required files
+    if not os.path.exists(model_path):
+        raise Exception(f"Model directory {model_path} does not exist")
+    
+    metadata_path = os.path.join(model_path, "metadata")
+    if not os.path.exists(metadata_path):
+        raise Exception(f"Model metadata directory does not exist at {metadata_path}")
+    
+    # Verify metadata file exists
+    metadata_file = os.path.join(metadata_path, "part-00000")
+    if not os.path.exists(metadata_file):
+        raise Exception(f"Model metadata file does not exist at {metadata_file}")
+    
+    logger.info("Model directory structure verified, loading model...")
     model = RandomForestClassificationModel.load(model_path)
-    print(f"Successfully loaded model from {model_path}")
+    logger.info(f"Successfully loaded model from {model_path}")
 except Exception as e:
-    print(f"Error loading model: {e}")
-    raise HTTPException(status_code=500, detail="Model loading failed")
+    logger.error(f"Error loading model: {str(e)}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    logger.error(f"Directory contents: {os.listdir('.')}")
+    if os.path.exists(model_path):
+        logger.error(f"Model directory contents: {os.listdir(model_path)}")
+        if os.path.exists(metadata_path):
+            logger.error(f"Metadata directory contents: {os.listdir(metadata_path)}")
+    raise HTTPException(status_code=500, detail=f"Model loading failed: {str(e)}")
 
 # Pydantic model for request validation
 class CustomerData(BaseModel):
@@ -119,4 +161,17 @@ def predict(data: CustomerData):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    logger.info("Starting application...")
+    try:
+        # Run the application with explicit host and port
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8000,
+            log_level="info",
+            reload=False,
+            access_log=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to start application: {str(e)}")
+        raise
