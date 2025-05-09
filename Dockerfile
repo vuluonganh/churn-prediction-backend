@@ -21,8 +21,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the model first
+COPY rf_spark_model /app/rf_spark_model/
+
 # Copy the rest of the application
 COPY . .
+
+# Set environment variables for Spark
+ENV SPARK_LOCAL_IP=0.0.0.0
+ENV SPARK_PUBLIC_DNS=localhost
 
 # Expose the port FastAPI will run on
 EXPOSE 8000

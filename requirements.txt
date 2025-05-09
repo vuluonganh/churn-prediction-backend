@@ -1,6 +1,7 @@
-fastapi==0.115.0
-uvicorn==0.30.6
-pydantic==2.9.2
-pyspark==3.5.3
+fastapi==0.115.12
+uvicorn==0.34.2
+pydantic==2.11.4
+pyspark==3.5.1
 numpy==1.26.4
-setuptools==74.0.0
+setuptools==75.2.0
+pandas==2.2.3
