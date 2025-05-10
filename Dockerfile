@@ -32,7 +32,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the model and application code
-COPY rf_spark_model/ ./rf_spark_model/
+COPY svm_spark_model/ ./svm_spark_model/
 COPY main.py .
 
 # Expose port

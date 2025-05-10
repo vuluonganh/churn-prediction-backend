@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pyspark.sql import SparkSession, Row
-from pyspark.ml.classification import RandomForestClassificationModel
+from pyspark.ml.classification import LinearSVCModel
 from pyspark.ml.feature import VectorAssembler, StringIndexer, OneHotEncoder
 import logging
 import os
@@ -42,8 +42,8 @@ def cleanup():
 
 atexit.register(cleanup)
 
-# Load the RandomForest model
-model_path = "rf_spark_model"
+# Load the SVM model
+model_path = "svm_spark_model"
 try:
     logger.info(f"Attempting to load model from {model_path}")
     if not os.path.exists(model_path):
@@ -58,7 +58,7 @@ try:
         raise Exception(f"Model metadata file does not exist at {metadata_file}")
     
     logger.info("Model directory structure verified, loading model...")
-    model = RandomForestClassificationModel.load(model_path)
+    model = LinearSVCModel.load(model_path)
     logger.info(f"Successfully loaded model from {model_path}")
 except Exception as e:
     logger.error(f"Error loading model: {str(e)}")
@@ -84,8 +84,12 @@ app.add_middleware(
 
 # Define input data structure
 class InputData(BaseModel):
-    Dependents: str
+    # Numerical features first
     tenure: int
+    MonthlyCharges: float
+    TotalCharges: float
+    # Categorical features in specified order
+    Dependents: str
     InternetService: str
     OnlineSecurity: str
     TechSupport: str
@@ -94,8 +98,6 @@ class InputData(BaseModel):
     Contract: str
     PaperlessBilling: str
     PaymentMethod: str
-    MonthlyCharges: float
-    TotalCharges: float
 
 @app.post("/predict")
 def predict(data: InputData):
@@ -105,12 +107,12 @@ def predict(data: InputData):
         input_row = Row(**input_dict)
         input_df = spark.createDataFrame([input_row])
 
-        # Preprocess categorical features
+        # Define features in exact order as trained model
+        numerical_cols = ["tenure", "MonthlyCharges", "TotalCharges"]
         categorical_cols = [
             "Dependents", "InternetService", "OnlineSecurity", "TechSupport",
             "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod"
         ]
-        numerical_cols = ["tenure", "MonthlyCharges", "TotalCharges"]
 
         # Step 1: Use StringIndexer to convert categorical columns to numerical indices
         indexers = [
@@ -125,6 +127,7 @@ def predict(data: InputData):
         ]
 
         # Step 3: Assemble all features into a single vector
+        # Ensure the order matches: numerical features first, then categorical features
         feature_cols = numerical_cols + [f"{col}_encoded" for col in categorical_cols]
         assembler = VectorAssembler(
             inputCols=feature_cols,
@@ -144,14 +147,8 @@ def predict(data: InputData):
             pred_value = prediction.select("prediction").collect()[0][0]
             is_churn = bool(pred_value == 1.0)
 
-            prob_value = None
-            if "probability" in prediction.columns:
-                prob_array = prediction.select("probability").collect()[0][0]
-                prob_value = float(prob_array[1])
-
             return {
-                "result": "Yes" if is_churn else "No",
-                "probability": prob_value if prob_value is not None else None
+                "result": "Yes" if is_churn else "No"
             }
         else:
             raise HTTPException(status_code=500, detail="Prediction column not found in model output")
