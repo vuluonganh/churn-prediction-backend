@@ -1,21 +1,42 @@
-FROM python:3.8-slim
+# Use an official Python runtime as the base image
+FROM python:3.9-slim
 
-# Install OpenJDK
-RUN apt-get update && apt-get install -y openjdk-11-jdk && apt-get clean
+# Install Java and other dependencies
+RUN apt-get update && apt-get install -y \
+    default-jdk \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set JAVA_HOME
-ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+# Find and set the correct Java home
+RUN java_home=$(dirname $(dirname $(readlink -f $(which java)))) && \
+    echo "Found Java home at: $java_home" && \
+    echo "export JAVA_HOME=$java_home" >> /etc/profile && \
+    echo "export PATH=$JAVA_HOME/bin:$PATH" >> /etc/profile
 
-# Install Python dependencies
+# Set environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+ENV SPARK_LOCAL_IP=0.0.0.0
+
+# Verify Java installation
+RUN java -version && \
+    echo "JAVA_HOME is set to: $JAVA_HOME" && \
+    ls -l $JAVA_HOME/bin/java
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the app code and model
-COPY app.py .
-COPY rf_spark_model /rf_spark_model
+# Copy the model and application code
+COPY rf_spark_model/ ./rf_spark_model/
+COPY main.py .
 
-# Set the working directory
-WORKDIR /
+# Expose port
+EXPOSE 8000
 
-# Run the app
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT"]
+# Run the application with proper signal handling
+CMD ["python", "main.py"]

@@ -4,4 +4,4 @@ pydantic==2.11.4
 pyspark==3.5.1
 numpy==1.26.4
 setuptools==75.2.0
-pandas==2.2.3
+requests==2.31.0
