@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import atexit
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -88,7 +89,7 @@ class InputData(BaseModel):
     tenure: int
     MonthlyCharges: float
     TotalCharges: float
-    # Categorical features in specified order
+    # Categorical features
     Dependents: str
     InternetService: str
     OnlineSecurity: str
@@ -142,16 +143,36 @@ def predict(data: InputData):
         # Make prediction
         prediction = model.transform(input_df)
 
-        # Extract prediction result
-        if "prediction" in prediction.columns:
-            pred_value = prediction.select("prediction").collect()[0][0]
+        # Extract prediction result and raw prediction score
+        if "prediction" in prediction.columns and "rawPrediction" in prediction.columns:
+            pred_row = prediction.select("prediction", "rawPrediction").collect()[0]
+            pred_value = pred_row[0]
+            raw_pred = pred_row[1][1]  # Get the score for class 1 (churn)
+            
+            # Log the raw prediction values for debugging
+            logger.info(f"Raw prediction values: {pred_row[1]}")
+            logger.info(f"Selected raw prediction for class 1: {raw_pred}")
+            
+            # Scale the raw prediction to a more reasonable range
+            # Using a scaling factor to bring the values into a reasonable range
+            scaled_pred = raw_pred / 100.0  # Adjust this scaling factor based on your model's output range
+            
+            # Convert scaled prediction to probability using sigmoid
+            probability = 1 / (1 + np.exp(-scaled_pred))
+            logger.info(f"Scaled prediction: {scaled_pred}")
+            logger.info(f"Calculated probability: {probability}")
+            
             is_churn = bool(pred_value == 1.0)
+            logger.info(f"Final prediction: {is_churn}")
 
             return {
-                "result": "Yes" if is_churn else "No"
+                "result": "Yes" if is_churn else "No",
+                "probability": float(probability),
+                "raw_prediction": float(raw_pred),
+                "scaled_prediction": float(scaled_pred)
             }
         else:
-            raise HTTPException(status_code=500, detail="Prediction column not found in model output")
+            raise HTTPException(status_code=500, detail="Prediction or rawPrediction column not found in model output")
 
     except Exception as e:
         import traceback
