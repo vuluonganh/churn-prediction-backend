@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pyspark.sql import SparkSession, Row
 from pyspark.ml.classification import LinearSVCModel
-from pyspark.ml.feature import VectorAssembler, StringIndexer, OneHotEncoder
+from pyspark.ml.feature import VectorAssembler, StringIndexer, StandardScaler
+from pyspark.ml import Pipeline
 import logging
 import os
 import sys
@@ -44,7 +45,7 @@ def cleanup():
 atexit.register(cleanup)
 
 # Load the SVM model
-model_path = "svm_spark_model"
+model_path = "model/svm_spark_model"
 try:
     logger.info(f"Attempting to load model from {model_path}")
     if not os.path.exists(model_path):
@@ -115,29 +116,23 @@ def predict(data: InputData):
             "StreamingTV", "StreamingMovies", "Contract", "PaperlessBilling", "PaymentMethod"
         ]
 
-        # Step 1: Use StringIndexer to convert categorical columns to numerical indices
         indexers = [
             StringIndexer(inputCol=col, outputCol=f"{col}_index", handleInvalid="keep")
             for col in categorical_cols
         ]
 
-        # Step 2: One-hot encode the indexed columns
-        encoders = [
-            OneHotEncoder(inputCol=f"{col}_index", outputCol=f"{col}_encoded")
-            for col in categorical_cols
-        ]
-
-        # Step 3: Assemble all features into a single vector
-        # Ensure the order matches: numerical features first, then categorical features
         feature_cols = numerical_cols + [f"{col}_encoded" for col in categorical_cols]
         assembler = VectorAssembler(
             inputCols=feature_cols,
-            outputCol="features"
+            outputCol="num_features"
         )
 
-        # Create a pipeline for preprocessing
-        from pyspark.ml import Pipeline
-        pipeline = Pipeline(stages=indexers + encoders + [assembler])
+        scaler = StandardScaler(
+            inputCol="num_features",
+            outputCol="features",
+        )
+
+        pipeline = Pipeline(stages=indexers + [assembler] + [scaler])
         input_df = pipeline.fit(input_df).transform(input_df)
 
         # Make prediction

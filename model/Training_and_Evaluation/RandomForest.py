@@ -1,0 +1,228 @@
+from pyspark.ml.classification import RandomForestClassifier
+import numpy as np
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
+from pyspark.sql import SparkSession
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, classification_report, confusion_matrix, roc_curve
+
+spark = SparkSession.builder \
+    .appName("xgbja") \
+    .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+    .getOrCreate()
+
+class RandomForestClassifierWrapper:
+    def __init__(self,
+                 label_col="label",
+                 features_col="features",
+                 num_trees=150,
+                 max_depth=15,
+                 max_bins=32,
+                 impurity="entropy",
+                 feature_subset_strategy="auto",
+                 subsampling_rate=0.8,
+                 seed=7057412834806916763,
+                 max_memory_in_mb=256,
+                 min_info_gain=0.0,
+                 min_instances_per_node=1,
+                 min_weight_fraction_per_node=0.0,
+                 bootstrap=True,
+                 cache_node_ids=False,
+                 checkpoint_interval=10,
+                 prediction_col="prediction",
+                 probability_col="probability",
+                 raw_prediction_col="rawPrediction",
+                 leaf_col=""):
+        self.label_col = label_col
+        self.features_col = features_col
+        self.num_trees = num_trees
+        self.max_depth = max_depth
+        self.max_bins = max_bins
+        self.impurity = impurity
+        self.feature_subset_strategy = feature_subset_strategy
+        self.subsampling_rate = subsampling_rate
+        self.seed = seed
+        self.max_memory_in_mb = max_memory_in_mb
+        self.min_info_gain = min_info_gain
+        self.min_instances_per_node = min_instances_per_node
+        self.min_weight_fraction_per_node = min_weight_fraction_per_node
+        self.bootstrap = bootstrap
+        self.cache_node_ids = cache_node_ids
+        self.checkpoint_interval = checkpoint_interval
+        self.prediction_col = prediction_col
+        self.probability_col = probability_col
+        self.raw_prediction_col = raw_prediction_col
+        self.leaf_col = leaf_col
+        self.model = self._create_model()
+
+    def _create_model(self):
+        return RandomForestClassifier(
+            labelCol=self.label_col,
+            featuresCol=self.features_col,
+            numTrees=self.num_trees,
+            maxDepth=self.max_depth,
+            maxBins=self.max_bins,
+            impurity=self.impurity,
+            featureSubsetStrategy=self.feature_subset_strategy,
+            subsamplingRate=self.subsampling_rate,
+            seed=self.seed,
+            maxMemoryInMB=self.max_memory_in_mb,
+            minInfoGain=self.min_info_gain,
+            minInstancesPerNode=self.min_instances_per_node,
+            minWeightFractionPerNode=self.min_weight_fraction_per_node,
+            bootstrap=self.bootstrap,
+            cacheNodeIds=self.cache_node_ids,
+            checkpointInterval=self.checkpoint_interval,
+            predictionCol=self.prediction_col,
+            probabilityCol=self.probability_col,
+            rawPredictionCol=self.raw_prediction_col,
+            leafCol=self.leaf_col
+        )
+
+    def get_model(self):
+        return self.model
+
+def metrics_calculator(y_true, y_pred_class, y_pred_prob, model_name, has_probability=True):
+    '''
+    This function calculates performance metrics for a given model.
+    If probabilities are not available, AUC is omitted.
+    '''
+    metrics = [
+        accuracy_score(y_true, y_pred_class),
+        precision_score(y_true, y_pred_class, average='binary', zero_division=1),
+        recall_score(y_true, y_pred_class, average='binary', zero_division=1),
+        f1_score(y_true, y_pred_class, average='binary', zero_division=1)
+    ]
+    index = ['Accuracy', 'Precision', 'Recall', 'F1-score']
+
+    if has_probability:
+        metrics.append(roc_auc_score(y_true, y_pred_prob))
+        index.append('AUC')
+
+    result = pd.DataFrame(data=metrics,
+                          index=index,
+                          columns=[model_name])
+    result = (result * 100).round(2).astype(str) + '%'
+    return result
+
+def model_evaluation(clf, test_predictions, model_name, has_probability=True):
+    '''Displays model evaluation including classification report, confusion matrix, ROC curve (if applicable), and metrics.'''
+
+    # Check if probability column exists
+    columns = test_predictions.columns
+    has_probability = has_probability and 'probability' in columns
+
+    # Extract predictions and true labels
+    y_true = test_predictions.select("label").rdd.map(lambda row: row['label']).collect()
+    if has_probability:
+        y_pred_prob = test_predictions.select("probability").rdd.map(lambda row: row[0][1]).collect()
+        y_pred_class = [1 if prob >= 0.5 else 0 for prob in y_pred_prob]
+    else:
+        y_pred_class = test_predictions.select("prediction").rdd.map(lambda row: row['prediction']).collect()
+        y_pred_prob = None  
+
+    # Classification report
+    print("\n\t  Classification report for test set")
+    print("-" * 55)
+    print(classification_report(y_true, y_pred_class))
+
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred_class)
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['No Churn', 'Churn'], yticklabels=['No Churn', 'Churn'])
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.show()
+
+    # ROC Curve (only if probabilities are available)
+    if has_probability:
+        fpr, tpr, _ = roc_curve(y_true, y_pred_prob)
+        auc = roc_auc_score(y_true, y_pred_prob)
+        plt.figure(figsize=(6, 5))
+        plt.plot(fpr, tpr, color='blue', label=f'ROC Curve (AUC = {auc:.2f})')
+        plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curve')
+        plt.legend(loc='lower right')
+        plt.show()
+
+    # Performance metrics
+    result = metrics_calculator(y_true, y_pred_class, y_pred_prob, model_name, has_probability)
+    print(result)
+
+def main():
+
+    df_train = spark.read.csv('/Users/vothao/churn-prediction-frontend/model/data/balanced_training_data.csv', header=True, inferSchema=True)
+    df_train = df_train.drop('customerID')
+
+    df_test = spark.read.csv('/Users/vothao/churn-prediction-frontend/model/data/balanced_test_data.csv', header=True, inferSchema=True)
+    df_test = df_test.drop('customerID')
+
+    numerical_columns = ['tenure', 'MonthlyCharges', 'TotalCharges']
+    categorical_columns = ['Dependents', 'InternetService', 'OnlineSecurity',
+                           'TechSupport', 'StreamingTV', 'StreamingMovies', 
+                           'Contract', 'PaperlessBilling', 'PaymentMethod']
+
+    # StringIndexer
+    indexers = [StringIndexer(inputCol=col, outputCol=col + "_Index") for col in categorical_columns]
+    label_indexer = StringIndexer(inputCol='Churn', outputCol='label').fit(df_train)
+    indexers.append(label_indexer)
+
+    # VectorAssembler + StandardScaler
+    feature_columns = numerical_columns + [col + "_Index" for col in categorical_columns]
+    assembler = VectorAssembler(inputCols=feature_columns, outputCol='num_features')
+    scaler = StandardScaler(inputCol='num_features', outputCol='features')
+
+    # Pipeline
+    pipeline = Pipeline(stages=indexers + [assembler, scaler])
+    pipeline_model = pipeline.fit(df_train)
+    df_transformed = pipeline_model.transform(df_train)
+    df_test_transformed = pipeline_model.transform(df_test)
+
+    df_train = df_transformed.select('features', 'label')
+    df_test = df_test_transformed.select('features', 'label')
+
+    # Model
+    rf_wrapper = RandomForestClassifierWrapper()
+    rf_model = rf_wrapper.get_model()
+    rf_model = rf_model.fit(df_train)
+
+    # Feature importance
+    importances = rf_model.featureImportances.toArray()
+
+    importance_df = pd.DataFrame({
+        'feature': numerical_columns + categorical_columns,
+        'importance': importances
+    })
+
+    importance_df = importance_df.sort_values(by='importance', ascending=False).reset_index(drop=True)
+
+    # Plot feature importance
+    plt.figure(figsize=(8, 10))
+    sns.barplot(
+        data=importance_df,
+        x='importance',
+        y='feature',
+        orient='h',
+        color='royalblue'
+    )
+    plt.title('Feature Importance (Random Forest)', fontsize=15)
+    plt.xlabel('Importance Score', fontsize=12)
+    plt.ylabel('Feature Name', fontsize=12)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.show()
+
+    # Save model
+    rf_model.write().overwrite().save("model/rf_spark_model")
+
+    # Model evaluation
+    test_predictions = rf_model.transform(df_test)
+    model_evaluation(rf_model, test_predictions, "Random Forest")
+
+if __name__ == "__main__":
+    main()
