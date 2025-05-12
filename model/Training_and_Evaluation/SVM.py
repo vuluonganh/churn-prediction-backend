@@ -1,7 +1,7 @@
 from pyspark.ml.classification import LinearSVC
 import numpy as np
 from pyspark.ml import Pipeline
-from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
+from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler, OneHotEncoder
 from pyspark.sql import SparkSession
 import pandas as pd
 import seaborn as sns
@@ -148,13 +148,16 @@ def main():
     label_indexer = StringIndexer(inputCol='Churn', outputCol='label').fit(df_train)
     indexers.append(label_indexer)
 
+    # OneHotEncoder
+    onehotencoder = [OneHotEncoder(inputCols=[col + "_Index"], outputCols=[col + "_encoded"]) for col in categorical_columns]
+
     # VectorAssembler + StandardScaler
-    feature_columns = numerical_columns + [col + "_Index" for col in categorical_columns]
+    feature_columns = numerical_columns + [col + "_encoded" for col in categorical_columns]
     assembler = VectorAssembler(inputCols=feature_columns, outputCol='num_features')
     scaler = StandardScaler(inputCol='num_features', outputCol='features')
 
     # Pipeline
-    pipeline = Pipeline(stages=indexers + [assembler, scaler])
+    pipeline = Pipeline(stages=indexers + onehotencoder + [assembler, scaler])
     pipeline_model = pipeline.fit(df_train)
     df_transformed = pipeline_model.transform(df_train)
     df_test_transformed = pipeline_model.transform(df_test)

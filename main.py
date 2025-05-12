@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pyspark.sql import SparkSession, Row
 from pyspark.ml.classification import LinearSVCModel
-from pyspark.ml.feature import VectorAssembler, StringIndexer, StandardScaler
+from pyspark.ml.feature import VectorAssembler, StringIndexer, StandardScaler, OneHotEncoder
 from pyspark.ml import Pipeline
 import logging
 import os
@@ -121,6 +121,11 @@ def predict(data: InputData):
             for col in categorical_cols
         ]
 
+        onehotencoder = [
+            OneHotEncoder(inputCol=f"{col}_index", outputCol=f"{col}_encoded", handleInvalid="keep")
+            for col in categorical_cols
+        ]
+
         feature_cols = numerical_cols + [f"{col}_encoded" for col in categorical_cols]
         assembler = VectorAssembler(
             inputCols=feature_cols,
@@ -132,7 +137,7 @@ def predict(data: InputData):
             outputCol="features",
         )
 
-        pipeline = Pipeline(stages=indexers + [assembler] + [scaler])
+        pipeline = Pipeline(stages=indexers + onehotencoder +[assembler] + [scaler])
         input_df = pipeline.fit(input_df).transform(input_df)
 
         # Make prediction
